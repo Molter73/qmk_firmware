@@ -1,7 +1,11 @@
 // Copyright 2024 splitkb.com (support@splitkb.com)
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "keyboard.h"
 #include "keycodes.h"
+#include "progmem.h"
+#include "timer.h"
+
 #include QMK_KEYBOARD_H
 
 enum layers {
@@ -10,18 +14,25 @@ enum layers {
     _MEDIA,
 };
 
+static uint16_t animation_timer;
+
 void keyboard_post_init_user() {
     rgb_matrix_mode_noeeprom(RGB_MATRIX_SOLID_COLOR);
+    oled_clear();
+
+    animation_timer = timer_read();
 }
 
 bool rgb_matrix_indicators_user(void) {
-    switch (get_highest_layer(layer_state))    {
+    switch (get_highest_layer(layer_state)) {
         case _SYM:
             rgb_matrix_set_color_all(RGB_AZURE);
-                        break;
+            break;
+
         case _MEDIA:
             rgb_matrix_set_color_all(RGB_CHARTREUSE);
-                        break;
+            break;
+
         case _QWERTY:
         default:
             rgb_matrix_set_color_all(RGB_CORAL);
@@ -213,32 +224,137 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
  * DO NOT edit the rev1.c file; instead override the weakly defined default functions by your own.
  */
 
-/*
-static void render_logo(void) {
-    #define FRAME_SIZE 32
-    typedef struct agumon_s {
-        const char idle[FRAME_SIZE];
-    } agumon_t;
+// clang-format on
 
-    static const agumon_t PROGMEM agumon = {
+#define START_POSITION {3, 8}
+
+#define TILE_SIZE_X 8
+#define TILE_SIZE_Y 1
+#define SPRITE_SIZE ((TILE_SIZE_X * 2) * (TILE_SIZE_Y * 2))
+
+#ifdef OLED_ENABLE
+typedef struct position_s {
+    uint16_t x;
+    uint16_t y;
+} position_t;
+
+typedef enum direction_e {
+    LEFT = 0,
+    RIGHT,
+} direction_t;
+
+typedef enum sprite_type_e {
+    IDLE = 0,
+} sprite_type_t;
+
+typedef const char PROGMEM sprite_t[SPRITE_SIZE];
+
+typedef struct digimon_s {
+    position_t  position;
+    direction_t direction;
+    sprite_t    idle;
+} digimon_t;
+
+uint16_t digimon_position(const digimon_t* d) {
+    return d->position.x * 8 + d->position.y * 64;
+}
+
+void digimon_direction_toggle(digimon_t* d) {
+    if (d->direction == LEFT) {
+        d->direction = RIGHT;
+    } else {
+        d->direction = LEFT;
+    }
+}
+
+const char* digimon_sprite(const digimon_t* d, sprite_type_t type) {
+    switch (type) {
+        case IDLE:
+            return d->idle;
+    }
+    return d->idle;
+}
+
+/**
+ * Clear the frames where the digimon is currently standing
+ */
+void digimon_clear(digimon_t* d) {
+    for (int i = 0; i < SPRITE_SIZE; i++) {
+        uint16_t offset = i < 16 ? 0 : 48;
+        oled_write_raw_byte(0x00, digimon_position(d) + i + offset);
+    }
+}
+
+void digimon_render(digimon_t* d) {
+    const char* sprite = digimon_sprite(d, IDLE);
+
+    int      i      = 0;
+    int      j      = d->direction == LEFT ? 0 : 15;
+    uint16_t offset = 0;
+    while (i < SPRITE_SIZE) {
+        if (i == 16) {
+            offset = 48;
+            if (d->direction == RIGHT) {
+                j = 31;
+            }
+        }
+
+        oled_write_raw_byte(sprite[j], digimon_position(d) + i + offset);
+
+        i++;
+        if (d->direction == LEFT) {
+            j++;
+        } else {
+            j--;
+        }
+    }
+}
+
+bool oled_task_user(void) {
+    static digimon_t PROGMEM agumon = {
+        .position  = START_POSITION,
+        .direction = LEFT,
+        // clang-format off
         .idle = {
         0x70, 0x88, 0x88, 0x88, 0x8c, 0x4e, 0x46, 0x02,
         0x2a, 0x3a, 0x32, 0x04, 0xc8, 0x70, 0x00, 0x00,
         0x00, 0xcd, 0xaa, 0xea, 0x9e, 0x92, 0xe2, 0x2d,
         0xeb, 0xaa, 0xd8, 0x83, 0xfc, 0xa8, 0xd8, 0x00
-        }
+        } // clang-format on
     };
-    oled_write_raw_P(agumon.idle, FRAME_SIZE);
-}
-*/
 
-/* DELETE THIS LINE TO UNCOMMENT (1/2)
-#ifdef OLED_ENABLE
-bool oled_task_user(void) {
-  // Your code goes here
+    // Turn off oled if more than 60 seconds without activity go by
+    if (last_input_activity_elapsed() >= 60000) {
+        oled_off();
+        return false;
+    } else {
+        oled_on();
+    }
+
+    if (timer_elapsed(animation_timer) > 500) {
+        animation_timer = timer_read();
+        digimon_clear(&agumon);
+
+        digimon_direction_toggle(&agumon);
+
+        if (agumon.position.x < 6) {
+            agumon.position.x++;
+        } else {
+            agumon.position.x = 0;
+            if (agumon.position.y < 14) {
+                agumon.position.y++;
+            } else {
+                agumon.position.y = 0;
+            }
+        }
+        digimon_render(&agumon);
+    }
+
+    return false;
 }
 #endif
 
+/* DELETE THIS LINE TO UNCOMMENT (1/2)
 #ifdef ENCODER_ENABLE
 bool encoder_update_user(uint8_t index, bool clockwise) {
   // Your code goes here
