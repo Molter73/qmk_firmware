@@ -1,11 +1,6 @@
 // Copyright 2024 splitkb.com (support@splitkb.com)
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "keyboard.h"
-#include "keycodes.h"
-#include "progmem.h"
-#include "timer.h"
-
 #include QMK_KEYBOARD_H
 
 enum layers {
@@ -16,11 +11,18 @@ enum layers {
 
 static uint16_t animation_timer;
 
+bool is_oled_active;
+
+void housekeeping_task_user() {
+    is_oled_active = last_input_activity_elapsed() < 60000;
+}
+
 void keyboard_post_init_user() {
     rgb_matrix_mode_noeeprom(RGB_MATRIX_SOLID_COLOR);
     oled_clear();
 
     animation_timer = timer_read();
+    srand(timer_read());
 }
 
 bool rgb_matrix_indicators_user(void) {
@@ -249,9 +251,31 @@ typedef enum sprite_type_e {
 
 typedef const char PROGMEM sprite_t[SPRITE_SIZE];
 
+typedef enum animation_type_e {
+    NONE = 0,
+    TURN,
+    WALK,
+    ASCEND,
+    DESCEND,
+    ANIMATION_MAX,
+} animation_type_t;
+
+typedef struct animation_s {
+    animation_type_t type;
+    uint16_t         step;
+} animation_t;
+
+#    define ANIMATION_INIT {.type = NONE, .step = 0}
+
+void animation_reset(animation_t* a) {
+    a->type = NONE;
+    a->step = 0;
+}
+
 typedef struct digimon_s {
     position_t  position;
     direction_t direction;
+    animation_t animation;
     sprite_t    idle;
 } digimon_t;
 
@@ -293,7 +317,7 @@ void digimon_render(digimon_t* d) {
     uint16_t offset = 0;
     while (i < SPRITE_SIZE) {
         if (i == 16) {
-            offset = 48;
+            offset = 48; // Move to the next line.
             if (d->direction == RIGHT) {
                 j = 31;
             }
@@ -310,10 +334,49 @@ void digimon_render(digimon_t* d) {
     }
 }
 
+/**
+ * Look the other direction
+ */
+void digimon_turn(digimon_t* d) {
+    digimon_direction_toggle(d);
+    animation_reset(&d->animation);
+}
+
+/**
+ * If possible, take a step forward, otherwise turn.
+ */
+void digimon_walk(digimon_t* d) {
+    if (d->direction == LEFT && d->position.x > 0) {
+        d->position.x--;
+    } else if (d->direction == RIGHT && d->position.x < 6) {
+        d->position.x++;
+    } else {
+        digimon_turn(d);
+    }
+
+    animation_reset(&d->animation);
+}
+
+/**
+ * Move vertically if possible, otherwise go in the oposite direction
+ */
+void digimon_vertical_move(digimon_t* d, bool up) {
+    if (up && d->position.y > 0) {
+        d->position.y--;
+    } else if (!up && d->position.y < 14) {
+        d->position.y++;
+    } else {
+        digimon_vertical_move(d, !up);
+    }
+
+    animation_reset(&d->animation);
+}
+
 bool oled_task_user(void) {
     static digimon_t PROGMEM agumon = {
         .position  = START_POSITION,
         .direction = LEFT,
+        .animation = ANIMATION_INIT,
         // clang-format off
         .idle = {
         0x70, 0x88, 0x88, 0x88, 0x8c, 0x4e, 0x46, 0x02,
@@ -324,29 +387,45 @@ bool oled_task_user(void) {
     };
 
     // Turn off oled if more than 60 seconds without activity go by
-    if (last_input_activity_elapsed() >= 60000) {
+    if (is_oled_active) {
+        oled_on();
+    } else {
         oled_off();
         return false;
-    } else {
-        oled_on();
     }
 
     if (timer_elapsed(animation_timer) > 500) {
         animation_timer = timer_read();
         digimon_clear(&agumon);
 
-        digimon_direction_toggle(&agumon);
-
-        if (agumon.position.x < 6) {
-            agumon.position.x++;
-        } else {
-            agumon.position.x = 0;
-            if (agumon.position.y < 14) {
-                agumon.position.y++;
-            } else {
-                agumon.position.y = 0;
-            }
+        if (agumon.animation.type == NONE) {
+            // Pick a new animation, but exclude NONE
+            agumon.animation.type = (random() % (ANIMATION_MAX - 1)) + 1;
         }
+
+        switch (agumon.animation.type) {
+            case TURN:
+                digimon_turn(&agumon);
+                break;
+
+            case WALK:
+                digimon_walk(&agumon);
+                break;
+
+            case ASCEND:
+                digimon_vertical_move(&agumon, true);
+                break;
+
+            case DESCEND:
+                digimon_vertical_move(&agumon, false);
+                break;
+
+            case NONE:
+            case ANIMATION_MAX:
+                // unreachable
+                break;
+        }
+
         digimon_render(&agumon);
     }
 
