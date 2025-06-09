@@ -11,7 +11,7 @@ enum layers {
 };
 
 void housekeeping_task_user() {
-    is_oled_active = last_input_activity_elapsed() < 60000;
+    last_activity_elapsed = last_input_activity_elapsed();
 }
 
 void keyboard_post_init_user() {

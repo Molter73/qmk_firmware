@@ -2,5 +2,5 @@
 
 #include <quantum.h>
 
-extern bool     is_oled_active;
 extern uint16_t animation_timer;
+extern uint32_t last_activity_elapsed;

@@ -1,17 +1,14 @@
 #include "digimon.h"
-#include "oled_driver.h"
 
 #define START_POSITION {3, 8}
 
 #define TILE_SIZE_X 8
 #define TILE_SIZE_Y 1
 #define TILE_SIZE_TOTAL (TILE_SIZE_X * TILE_SIZE_Y)
-#define ATTACK_SIZE ((TILE_SIZE_X) * (TILE_SIZE_Y))
-
-#ifdef OLED_ENABLE
+#define ATTACK_SIZE (TILE_SIZE_TOTAL)
 
 uint16_t animation_timer;
-bool     is_oled_active;
+uint32_t last_activity_elapsed;
 
 typedef struct position_s {
     uint16_t x;
@@ -33,7 +30,7 @@ typedef enum direction_e {
     DIRECTION_RIGHT,
 } direction_t;
 
-typedef const char PROGMEM tile_t[TILE_SIZE_TOTAL];
+typedef char PROGMEM tile_t[TILE_SIZE_TOTAL];
 
 void tile_render(const tile_t tile, position_t pos, bool invert) {
     int i = 0;
@@ -56,13 +53,18 @@ void tile_clear(position_t pos) {
     }
 }
 
+const tile_t zeds = {
+    0x80, 0x20, 0x60, 0x00, 0x24, 0x34, 0x2c, 0x24,
+};
+
 typedef enum sprite_type_e {
     SPRITE_IDLE = 0,
     SPRITE_ATTACK,
+    SPRITE_SLEEP,
     SPRITE_MAX,
 } sprite_type_t;
 
-#    define SPRITE_SIZE 4
+#define SPRITE_SIZE 4
 
 typedef tile_t sprite_t[SPRITE_SIZE];
 
@@ -74,6 +76,8 @@ typedef enum animation_type_e {
     ANIMATION_DESCEND,
     ANIMATION_ATTACK,
     ANIMATION_MAX,
+    // Sleep is excluded from the random set of animations
+    ANIMATION_SLEEP,
 } animation_type_t;
 
 typedef struct animation_s {
@@ -81,7 +85,7 @@ typedef struct animation_s {
     uint16_t         step;
 } animation_t;
 
-#    define ANIMATION_INIT {.type = ANIMATION_NONE, .step = 0}
+#define ANIMATION_INIT {.type = ANIMATION_NONE, .step = 0}
 
 void animation_reset(animation_t* a) {
     a->type = ANIMATION_NONE;
@@ -117,6 +121,9 @@ const tile_t* digimon_sprite(const digimon_t* d) {
             } else {
                 break;
             }
+
+        case ANIMATION_SLEEP:
+            return d->sprites[SPRITE_SLEEP];
 
         default:
             break;
@@ -269,7 +276,43 @@ void digimon_attack(digimon_t* d) {
     }
 }
 
+void digimon_sleep(digimon_t* d) {
+    // Make room for the zeds
+    if (d->position.y == 0) {
+        d->position.y++;
+    }
+
+    position_t pos = d->position;
+    pos.y--;
+
+    tile_clear(pos);
+    pos.x++;
+    tile_clear(pos);
+
+    if (d->animation.step == 0) {
+        pos.x--;
+        d->animation.step = 1;
+    } else {
+        d->animation.step = 0;
+    }
+
+    tile_render(zeds, pos, false);
+}
+
 void digimon_animate(digimon_t* d) {
+    if (last_activity_elapsed > 30000) {
+        if (d->animation.type == ANIMATION_NONE) {
+            d->animation.type = ANIMATION_SLEEP;
+        }
+    } else if (d->animation.type == ANIMATION_SLEEP) {
+        position_t pos = d->position;
+        pos.y--;
+        tile_clear(pos);
+        pos.x++;
+        tile_clear(pos);
+        d->animation.type = ANIMATION_NONE;
+    }
+
     if (d->animation.type == ANIMATION_NONE) {
         // Pick a new animation, but exclude NONE
         d->animation.type = (random() % (ANIMATION_MAX - 1)) + 1;
@@ -296,6 +339,10 @@ void digimon_animate(digimon_t* d) {
             digimon_attack(d);
             break;
 
+        case ANIMATION_SLEEP:
+            digimon_sleep(d);
+            break;
+
         case ANIMATION_NONE:
         case ANIMATION_MAX:
             // unreachable
@@ -303,34 +350,40 @@ void digimon_animate(digimon_t* d) {
     }
 }
 
-bool oled_task_user(void) {
-    static digimon_t PROGMEM agumon = {
-        .position  = START_POSITION,
-        .direction = DIRECTION_LEFT,
-        .animation = ANIMATION_INIT,
-        // clang-format off
-        .sprites = {
-            [SPRITE_IDLE] = {
-                {0x60, 0xd0, 0x50, 0x48, 0x0c, 0x02, 0x2a, 0x3a},
-                {0x32, 0x02, 0x04, 0x18, 0xe0, 0x00, 0x00, 0x00},
-                {0x00, 0xc0, 0xad, 0xeb, 0x9f, 0x91, 0xe1, 0x20},
-                {0xec, 0xaa, 0xd8, 0x83, 0xcc, 0xb0, 0xc0, 0x00},
-            },
-            [SPRITE_ATTACK] = {
-                {0x04, 0x8a, 0x4a, 0x4a, 0x72, 0x01, 0x19, 0x1d},
-                {0x05, 0x01, 0x02, 0x0c, 0xf0, 0x00, 0x00, 0x00},
-                {0x00, 0xc0, 0xad, 0xeb, 0x9f, 0x91, 0xe1, 0x20},
-                {0xec, 0xaa, 0xd8, 0x83, 0xcc, 0xb0, 0xc0, 0x00},
-            },
+static digimon_t PROGMEM agumon = {
+    .position  = START_POSITION,
+    .direction = DIRECTION_LEFT,
+    .animation = ANIMATION_INIT,
+    // clang-format off
+    .sprites = {
+        [SPRITE_IDLE] = {
+            {0x60, 0xd0, 0x50, 0x48, 0x0c, 0x02, 0x2a, 0x3a},
+            {0x32, 0x02, 0x04, 0x18, 0xe0, 0x00, 0x00, 0x00},
+            {0x00, 0xc0, 0xad, 0xeb, 0x9f, 0x91, 0xe1, 0x20},
+            {0xec, 0xaa, 0xd8, 0x83, 0xcc, 0xb0, 0xc0, 0x00},
         },
-        .attack = {
-            0x78, 0xcc, 0x84, 0x82, 0x87, 0xc4, 0x72, 0x1f,
+        [SPRITE_ATTACK] = {
+            {0x04, 0x8a, 0x4a, 0x4a, 0x72, 0x01, 0x19, 0x1d},
+            {0x05, 0x01, 0x02, 0x0c, 0xf0, 0x00, 0x00, 0x00},
+            {0x00, 0xc0, 0xad, 0xeb, 0x9f, 0x91, 0xe1, 0x20},
+            {0xec, 0xaa, 0xd8, 0x83, 0xcc, 0xb0, 0xc0, 0x00},
         },
-        // clang-format on
-    };
+        [SPRITE_SLEEP] = {
+            {0x00, 0xc0, 0xa0, 0xa0, 0x90, 0x18, 0x04, 0x44},
+            {0x84, 0x84, 0x04, 0x08, 0x30, 0xc0, 0x00, 0x00},
+            {0x7e, 0x81, 0x99, 0xb7, 0xad, 0xb5, 0xad, 0xb5},
+            {0xad, 0xb5, 0xad, 0xb5, 0xaf, 0x99, 0x81, 0x7e},
+        },
+    },
+    .attack = {
+        0x78, 0xcc, 0x84, 0x82, 0x87, 0xc4, 0x72, 0x1f,
+    },
+    // clang-format on
+};
 
+bool oled_task_user(void) {
     // Turn off oled if more than 60 seconds without activity go by
-    if (is_oled_active) {
+    if (last_activity_elapsed < 60000) {
         oled_on();
     } else {
         oled_off();
@@ -346,4 +399,3 @@ bool oled_task_user(void) {
 
     return false;
 }
-#endif
