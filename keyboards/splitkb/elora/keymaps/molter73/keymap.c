@@ -2,16 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include QMK_KEYBOARD_H
+#include "digimon.h"
 
 enum layers {
     _QWERTY = 0,
     _SYM,
     _MEDIA,
 };
-
-static uint16_t animation_timer;
-
-bool is_oled_active;
 
 void housekeeping_task_user() {
     is_oled_active = last_input_activity_elapsed() < 60000;
@@ -129,7 +126,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     [_SYM] = LAYOUT_myr(
       _______, _______, _______, _______, _______, _______,          _______, _______,          _______, _______, _______, _______, _______, _______,
       _______, LPBRCK , LBRC   , LCURL  , LPAREN , _______,          _______, _______,          _______, RPAREN , RCURL  , RBRC   , RPBRCK , _______,
-      _______, _______, _______, _______, _______, _______,          _______, _______,          KC_LEFT, KC_DOWN, KC_UP  , KC_RGHT, _______, _______,
+      _______, KC_GRV , _______, _______, _______, _______,          _______, _______,          KC_LEFT, KC_DOWN, KC_UP  , KC_RGHT, _______, _______,
       _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, KC_LBRC, KC_RBRC, KC_QUOT, KC_EQL , _______,
                                  _______, _______, _______       , _______   , KC_NO  , _______, _______, _______, _______, _______,
 
@@ -227,211 +224,6 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
  */
 
 // clang-format on
-
-#define START_POSITION {3, 8}
-
-#define TILE_SIZE_X 8
-#define TILE_SIZE_Y 1
-#define SPRITE_SIZE ((TILE_SIZE_X * 2) * (TILE_SIZE_Y * 2))
-
-#ifdef OLED_ENABLE
-typedef struct position_s {
-    uint16_t x;
-    uint16_t y;
-} position_t;
-
-typedef enum direction_e {
-    LEFT = 0,
-    RIGHT,
-} direction_t;
-
-typedef enum sprite_type_e {
-    IDLE = 0,
-} sprite_type_t;
-
-typedef const char PROGMEM sprite_t[SPRITE_SIZE];
-
-typedef enum animation_type_e {
-    NONE = 0,
-    TURN,
-    WALK,
-    ASCEND,
-    DESCEND,
-    ANIMATION_MAX,
-} animation_type_t;
-
-typedef struct animation_s {
-    animation_type_t type;
-    uint16_t         step;
-} animation_t;
-
-#    define ANIMATION_INIT {.type = NONE, .step = 0}
-
-void animation_reset(animation_t* a) {
-    a->type = NONE;
-    a->step = 0;
-}
-
-typedef struct digimon_s {
-    position_t  position;
-    direction_t direction;
-    animation_t animation;
-    sprite_t    idle;
-} digimon_t;
-
-uint16_t digimon_position(const digimon_t* d) {
-    return d->position.x * 8 + d->position.y * 64;
-}
-
-void digimon_direction_toggle(digimon_t* d) {
-    if (d->direction == LEFT) {
-        d->direction = RIGHT;
-    } else {
-        d->direction = LEFT;
-    }
-}
-
-const char* digimon_sprite(const digimon_t* d, sprite_type_t type) {
-    switch (type) {
-        case IDLE:
-            return d->idle;
-    }
-    return d->idle;
-}
-
-/**
- * Clear the frames where the digimon is currently standing
- */
-void digimon_clear(digimon_t* d) {
-    for (int i = 0; i < SPRITE_SIZE; i++) {
-        uint16_t offset = i < 16 ? 0 : 48;
-        oled_write_raw_byte(0x00, digimon_position(d) + i + offset);
-    }
-}
-
-void digimon_render(digimon_t* d) {
-    const char* sprite = digimon_sprite(d, IDLE);
-
-    int      i      = 0;
-    int      j      = d->direction == LEFT ? 0 : 15;
-    uint16_t offset = 0;
-    while (i < SPRITE_SIZE) {
-        if (i == 16) {
-            offset = 48; // Move to the next line.
-            if (d->direction == RIGHT) {
-                j = 31;
-            }
-        }
-
-        oled_write_raw_byte(sprite[j], digimon_position(d) + i + offset);
-
-        i++;
-        if (d->direction == LEFT) {
-            j++;
-        } else {
-            j--;
-        }
-    }
-}
-
-/**
- * Look the other direction
- */
-void digimon_turn(digimon_t* d) {
-    digimon_direction_toggle(d);
-    animation_reset(&d->animation);
-}
-
-/**
- * If possible, take a step forward, otherwise turn.
- */
-void digimon_walk(digimon_t* d) {
-    if (d->direction == LEFT && d->position.x > 0) {
-        d->position.x--;
-    } else if (d->direction == RIGHT && d->position.x < 6) {
-        d->position.x++;
-    } else {
-        digimon_turn(d);
-    }
-
-    animation_reset(&d->animation);
-}
-
-/**
- * Move vertically if possible, otherwise go in the oposite direction
- */
-void digimon_vertical_move(digimon_t* d, bool up) {
-    if (up && d->position.y > 0) {
-        d->position.y--;
-    } else if (!up && d->position.y < 14) {
-        d->position.y++;
-    } else {
-        digimon_vertical_move(d, !up);
-    }
-
-    animation_reset(&d->animation);
-}
-
-bool oled_task_user(void) {
-    static digimon_t PROGMEM agumon = {
-        .position  = START_POSITION,
-        .direction = LEFT,
-        .animation = ANIMATION_INIT,
-        // clang-format off
-        .idle = {
-        0x70, 0x88, 0x88, 0x88, 0x8c, 0x4e, 0x46, 0x02,
-        0x2a, 0x3a, 0x32, 0x04, 0xc8, 0x70, 0x00, 0x00,
-        0x00, 0xcd, 0xaa, 0xea, 0x9e, 0x92, 0xe2, 0x2d,
-        0xeb, 0xaa, 0xd8, 0x83, 0xfc, 0xa8, 0xd8, 0x00
-        } // clang-format on
-    };
-
-    // Turn off oled if more than 60 seconds without activity go by
-    if (is_oled_active) {
-        oled_on();
-    } else {
-        oled_off();
-        return false;
-    }
-
-    if (timer_elapsed(animation_timer) > 500) {
-        animation_timer = timer_read();
-        digimon_clear(&agumon);
-
-        if (agumon.animation.type == NONE) {
-            // Pick a new animation, but exclude NONE
-            agumon.animation.type = (random() % (ANIMATION_MAX - 1)) + 1;
-        }
-
-        switch (agumon.animation.type) {
-            case TURN:
-                digimon_turn(&agumon);
-                break;
-
-            case WALK:
-                digimon_walk(&agumon);
-                break;
-
-            case ASCEND:
-                digimon_vertical_move(&agumon, true);
-                break;
-
-            case DESCEND:
-                digimon_vertical_move(&agumon, false);
-                break;
-
-            case NONE:
-            case ANIMATION_MAX:
-                // unreachable
-                break;
-        }
-
-        digimon_render(&agumon);
-    }
-
-    return false;
-}
-#endif
 
 /* DELETE THIS LINE TO UNCOMMENT (1/2)
 #ifdef ENCODER_ENABLE

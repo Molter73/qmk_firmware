@@ -9,3 +9,6 @@
 #define RGB_MATRIX_TIMEOUT 60000 // number of milliseconds to wait until rgb automatically turns off
 #define SPLIT_LAYER_STATE_ENABLE
 #define SPLIT_LED_STATE_ENABLE
+#define SPLIT_ACTIVITY_ENABLE
+
+#define PERMISSIVE_HOLD
