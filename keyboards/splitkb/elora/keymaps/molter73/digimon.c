@@ -53,14 +53,11 @@ void tile_clear(position_t pos) {
     }
 }
 
-const tile_t zeds = {
-    0x80, 0x20, 0x60, 0x00, 0x24, 0x34, 0x2c, 0x24,
-};
-
 typedef enum sprite_type_e {
     SPRITE_IDLE = 0,
     SPRITE_ATTACK,
     SPRITE_SLEEP,
+    SPRITE_HAPPY,
     SPRITE_MAX,
 } sprite_type_t;
 
@@ -75,6 +72,8 @@ typedef enum animation_type_e {
     ANIMATION_ASCEND,
     ANIMATION_DESCEND,
     ANIMATION_ATTACK,
+    ANIMATION_DANCE,
+    ANIMATION_EAT,
     ANIMATION_MAX,
     // Sleep is excluded from the random set of animations
     ANIMATION_SLEEP,
@@ -124,6 +123,15 @@ const tile_t* digimon_sprite(const digimon_t* d) {
 
         case ANIMATION_SLEEP:
             return d->sprites[SPRITE_SLEEP];
+
+        case ANIMATION_DANCE:
+            return d->sprites[SPRITE_HAPPY];
+
+        case ANIMATION_EAT:
+            if (d->animation.step % 2 != 0) {
+                return d->sprites[SPRITE_HAPPY];
+            }
+            return d->sprites[SPRITE_IDLE];
 
         default:
             break;
@@ -253,9 +261,8 @@ void digimon_attack_render(const digimon_t* d, uint16_t offset) {
 }
 
 void digimon_attack(digimon_t* d) {
-    d->animation.step++;
     switch (d->animation.step) {
-        case 1:
+        case 0:
             // If we don't have enough room to attack, turn first
             if ((d->direction == DIRECTION_LEFT && d->position.x <= 1) || (d->direction == DIRECTION_RIGHT && d->position.x >= 5)) {
                 digimon_direction_toggle(d);
@@ -264,19 +271,24 @@ void digimon_attack(digimon_t* d) {
             // Render the attack next to the digimon
             digimon_attack_render(d, 0);
             break;
-        case 2:
+        case 1:
             digimon_attack_clear(d, 0);
             digimon_attack_render(d, 1);
             break;
-        case 3:
+        case 2:
             // mark the animation as done
             animation_reset(&d->animation);
             digimon_attack_clear(d, 1);
             break;
     }
+    d->animation.step++;
 }
 
 void digimon_sleep(digimon_t* d) {
+    const static tile_t zeds = {
+        0x80, 0x20, 0x60, 0x00, 0x24, 0x34, 0x2c, 0x24,
+    };
+
     // Make room for the zeds
     if (d->position.y == 0) {
         d->position.y++;
@@ -297,6 +309,56 @@ void digimon_sleep(digimon_t* d) {
     }
 
     tile_render(zeds, pos, false);
+}
+
+void digimon_dance(digimon_t* d) {
+    if (d->animation.step == 4) {
+        animation_reset(&d->animation);
+        return;
+    }
+
+    digimon_direction_toggle(d);
+    d->animation.step++;
+}
+
+void digimon_eat(digimon_t* d) {
+    const static tile_t meat = {
+        0x03, 0x1d, 0x3e, 0x7e, 0x7a, 0x54, 0xb8, 0xc0,
+    };
+
+    switch (d->animation.step) {
+        case 0: {
+            position_t pos = d->position;
+            if ((d->direction == DIRECTION_LEFT && d->position.x == 0) || (d->direction == DIRECTION_RIGHT && d->position.x >= 5)) {
+                // If we don't have enough room to eat, turn first
+                digimon_direction_toggle(d);
+            }
+
+            if (d->direction == DIRECTION_LEFT) {
+                pos.x--;
+            } else {
+                pos.x += 2;
+            }
+            tile_render(meat, pos, false);
+            break;
+        }
+        case 5: {
+            position_t pos = d->position;
+            if (d->direction == DIRECTION_LEFT) {
+                pos.x--;
+            } else {
+                pos.x += 2;
+            }
+            tile_clear(pos);
+
+            // Dance after eating
+            d->animation.step = 0;
+            d->animation.type = ANIMATION_DANCE;
+            return;
+        }
+    }
+
+    d->animation.step++;
 }
 
 void digimon_animate(digimon_t* d) {
@@ -339,6 +401,14 @@ void digimon_animate(digimon_t* d) {
             digimon_attack(d);
             break;
 
+        case ANIMATION_DANCE:
+            digimon_dance(d);
+            break;
+
+        case ANIMATION_EAT:
+            digimon_eat(d);
+            break;
+
         case ANIMATION_SLEEP:
             digimon_sleep(d);
             break;
@@ -350,11 +420,11 @@ void digimon_animate(digimon_t* d) {
     }
 }
 
+// clang-format off
 static digimon_t PROGMEM agumon = {
     .position  = START_POSITION,
     .direction = DIRECTION_LEFT,
     .animation = ANIMATION_INIT,
-    // clang-format off
     .sprites = {
         [SPRITE_IDLE] = {
             {0x60, 0xd0, 0x50, 0x48, 0x0c, 0x02, 0x2a, 0x3a},
@@ -374,12 +444,18 @@ static digimon_t PROGMEM agumon = {
             {0x7e, 0x81, 0x99, 0xb7, 0xad, 0xb5, 0xad, 0xb5},
             {0xad, 0xb5, 0xad, 0xb5, 0xaf, 0x99, 0x81, 0x7e},
         },
+        [SPRITE_HAPPY] = {
+            {0x04, 0x8a, 0x4a, 0x4a, 0x72, 0x01, 0x09, 0x05},
+            {0x05, 0x09, 0x02, 0x0c, 0xf0, 0x00, 0x00, 0x00},
+            {0x00, 0xc0, 0xad, 0xeb, 0x9f, 0x91, 0xe1, 0x20},
+            {0xec, 0xaa, 0xd8, 0x83, 0xcc, 0xb0, 0xc0, 0x00},
+        },
     },
     .attack = {
         0x78, 0xcc, 0x84, 0x82, 0x87, 0xc4, 0x72, 0x1f,
     },
-    // clang-format on
 };
+// clang-format on
 
 bool oled_task_user(void) {
     // Turn off oled if more than 60 seconds without activity go by
