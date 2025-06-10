@@ -58,6 +58,8 @@ typedef enum sprite_type_e {
     SPRITE_ATTACK,
     SPRITE_SLEEP,
     SPRITE_HAPPY,
+    SPRITE_ANGRY,
+    SPRITE_SAD,
     SPRITE_MAX,
 } sprite_type_t;
 
@@ -75,6 +77,7 @@ typedef enum animation_type_e {
     ANIMATION_ATTACK,
     ANIMATION_DANCE,
     ANIMATION_EAT,
+    ANIMATION_POOP,
     ANIMATION_MAX,
     // Sleep is excluded from the random set of animations
     ANIMATION_SLEEP,
@@ -133,6 +136,12 @@ const tile_t* digimon_sprite(const digimon_t* d) {
                 return d->sprites[SPRITE_HAPPY];
             }
             return d->sprites[SPRITE_IDLE];
+
+        case ANIMATION_POOP:
+            if (d->animation.step % 2 != 0) {
+                return d->sprites[SPRITE_ANGRY];
+            }
+            return d->sprites[SPRITE_SAD];
 
         default:
             break;
@@ -330,7 +339,7 @@ void digimon_eat(digimon_t* d) {
     switch (d->animation.step) {
         case 0: {
             position_t pos = d->position;
-            if ((d->direction == DIRECTION_LEFT && d->position.x == 0) || (d->direction == DIRECTION_RIGHT && d->position.x >= 5)) {
+            if ((d->direction == DIRECTION_LEFT && d->position.x == 0) || (d->direction == DIRECTION_RIGHT && d->position.x == 6)) {
                 // If we don't have enough room to eat, turn first
                 digimon_direction_toggle(d);
             }
@@ -359,6 +368,36 @@ void digimon_eat(digimon_t* d) {
         }
     }
 
+    d->animation.step++;
+}
+
+void digimon_poop(digimon_t* d) {
+    const static tile_t poop[] = {
+        {0x05, 0xc2, 0xa0, 0xf8, 0xd0, 0xe0, 0xca, 0x04},
+        {0x04, 0xca, 0xe0, 0xf8, 0xd0, 0xa0, 0xc2, 0x05},
+    };
+
+    position_t pos = d->position;
+    pos.y++;
+
+    if (d->animation.step == 0 && ((d->direction == DIRECTION_RIGHT && d->position.x == 0) || (d->direction == DIRECTION_LEFT && d->position.x == 6))) {
+        // If we don't have enough room to poop, turn first
+        digimon_direction_toggle(d);
+    }
+
+    if (d->direction == DIRECTION_LEFT) {
+        pos.x += 2;
+    } else {
+        pos.x--;
+    }
+
+    if (d->animation.step == 5) {
+        tile_clear(pos);
+        animation_reset(&d->animation);
+        return;
+    }
+
+    tile_render(poop[d->animation.step % 2], pos, false);
     d->animation.step++;
 }
 
@@ -421,6 +460,10 @@ void digimon_animate(digimon_t* d) {
             digimon_sleep(d);
             break;
 
+        case ANIMATION_POOP:
+            digimon_poop(d);
+            break;
+
         case ANIMATION_NONE:
         case ANIMATION_MAX:
         case ANIMATION_MOVE_MARKER:
@@ -458,6 +501,18 @@ static digimon_t PROGMEM agumon = {
             {0x05, 0x09, 0x02, 0x0c, 0xf0, 0x00, 0x00, 0x00},
             {0x00, 0xc0, 0xad, 0xeb, 0x9f, 0x91, 0xe1, 0x20},
             {0xec, 0xaa, 0xd8, 0x83, 0xcc, 0xb0, 0xc0, 0x00},
+        },
+        [SPRITE_ANGRY] = {
+            {0xc0, 0xa0, 0xa0, 0x90, 0x88, 0x04, 0x24, 0x14},
+            {0x04, 0x04, 0x08, 0x30, 0xc0, 0x00, 0x00, 0x00},
+            {0x0c, 0xcb, 0xaa, 0xea, 0x9c, 0xa1, 0xc0, 0x40},
+            {0xe0, 0x90, 0xc0, 0x8a, 0xdb, 0xaa, 0xcc, 0x00},
+        },
+        [SPRITE_SAD] = {
+            {0x00, 0xc0, 0xa0, 0xa0, 0x90, 0x18, 0x04, 0x44},
+            {0x84, 0x84, 0x04, 0x08, 0x30, 0xc0, 0x00, 0x00},
+            {0x00, 0x00, 0xc1, 0xba, 0xe6, 0x9e, 0xa2, 0xc2},
+            {0x40, 0xd8, 0xa4, 0xd0, 0x86, 0xd9, 0xa0, 0xc0},
         },
     },
     .attack = {
