@@ -71,6 +71,7 @@ typedef enum animation_type_e {
     ANIMATION_WALK,
     ANIMATION_ASCEND,
     ANIMATION_DESCEND,
+    ANIMATION_MOVE_MARKER, // This is not an actual animation
     ANIMATION_ATTACK,
     ANIMATION_DANCE,
     ANIMATION_EAT,
@@ -376,8 +377,15 @@ void digimon_animate(digimon_t* d) {
     }
 
     if (d->animation.type == ANIMATION_NONE) {
+        uint32_t value = random() % 100;
+        if (value < 85) {
+            // Do a move animation
+            d->animation.type = (random() % (ANIMATION_MOVE_MARKER - 1)) + 1;
+        } else {
+            // do something else
+            d->animation.type = (random() % (ANIMATION_MAX - ANIMATION_MOVE_MARKER - 1)) + ANIMATION_MOVE_MARKER + 1;
+        }
         // Pick a new animation, but exclude NONE
-        d->animation.type = (random() % (ANIMATION_MAX - 1)) + 1;
     }
 
     switch (d->animation.type) {
@@ -415,6 +423,7 @@ void digimon_animate(digimon_t* d) {
 
         case ANIMATION_NONE:
         case ANIMATION_MAX:
+        case ANIMATION_MOVE_MARKER:
             // unreachable
             break;
     }
